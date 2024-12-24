@@ -35,8 +35,10 @@ class Template {
         // Process in specific order to handle nested elements
         $content = preg_replace('/\{#.*?#\}/s', '', $content);
         
-        $content = preg_replace_callback('/\{inc\([\'\"](.+?)[\'\"]\)\}/', function($matches) {
-            return $this->includeTemplate($matches[1]);
+        $content = preg_replace_callback('/\{inc\([\'"]?(.*?)[\'"]?\)\}/', function($matches) {
+            $included = $this->includeTemplate($matches[1]);
+            error_log("Including template: " . $matches[1] . " Result: " . ($included ?: 'empty'));
+            return $included;
         }, $content);
     
         $content = $this->parseIfStatements($content);
@@ -169,8 +171,20 @@ class Template {
 
     private function includeTemplate($templateName) {
         $filePath = $this->viewPath . $templateName . '.' . $this->fileExtension;
-        if (!file_exists($filePath)) return '';
-        return $this->parse(file_get_contents($filePath));
+        error_log("Attempting to include: " . $filePath);
+        
+        if (!file_exists($filePath)) {
+            error_log("Template file not found: " . $filePath);
+            return "<!-- Template not found: {$templateName} -->";
+        }
+        
+        $content = file_get_contents($filePath);
+        if ($content === false) {
+            error_log("Failed to read template: " . $filePath);
+            return "<!-- Failed to read template: {$templateName} -->";
+        }
+        
+        return $this->parse($content);
     }
 
     private function getValue($key) {
