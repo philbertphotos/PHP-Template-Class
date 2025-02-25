@@ -103,6 +103,38 @@ echo $template->load('home');
 - `<=` Less than or equal
 - `&&` Logical AND
 
+#### For loop
+```html
+<ul>
+{% for product in products %}
+    <li>
+        <h2>{{ product.name }}</h2>
+        <p>Price: {{ product.price }}</p>
+        <p>{{ product.description }}</p>
+    </li>
+{% endfor %}
+</ul>
+```
+
+#### For loop - Nested
+```html
+<ul>
+{% for product in products %}
+    <li>
+        <h2>{{ product.name }}</h2>
+        <p>Price: {{ product.price }}</p>
+        <p>{{ product.description }}</p>
+        <p>Colors:</p>
+        <ul>
+            {% for color in product.colors %}
+                <li>{{ color }}</li>
+            {% endfor %}
+        </ul>
+    </li>
+{% endfor %}
+</ul>
+```
+
 ## Requirements
 
 - PHP 5.6 or higher
