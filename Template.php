@@ -37,6 +37,13 @@ class Template {
         $maxIterations = 10;
         $iteration = 0;
     
+        // Process includes first
+        $template = preg_replace_callback(
+            '/\{\{\s*inc\([\'"]([^\'"]+)[\'"]\)\s*\}\}/',
+            array($this, 'processInclude'),
+            $template
+        );
+    
         // Process nested for loops (from innermost to outermost)
         while ($iteration < $maxIterations) {
             // Find all for loops in the template
@@ -138,6 +145,18 @@ class Template {
         $template = preg_replace('/^\s+|\s+$/m', '', $template);
         
         return $template;
+    }
+    
+    private function processInclude($matches) {
+        $includePath = $matches[1];
+        $fullPath = $this->templateDir . $includePath . '.' . $this->templateExt;
+        
+        if (!file_exists($fullPath)) {
+            return '<!-- Include not found: ' . htmlspecialchars($includePath) . ' -->';
+        }
+        
+        $content = file_get_contents($fullPath);
+        return $this->processTemplate($content); // Process the included template
     }
     
     private function replaceVariable($matches) {
