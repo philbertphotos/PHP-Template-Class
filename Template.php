@@ -152,17 +152,19 @@ class Template {
         $fullPath = $this->templateDir . $includePath . '.' . $this->templateExt;
         
         if (!file_exists($fullPath)) {
-            return '<!-- Include not found: ' . htmlspecialchars($includePath) . ' -->';
+            // Handle null path
+            return '<!-- Include not found: ' . htmlspecialchars((string)$includePath) . ' -->';
         }
         
         $content = file_get_contents($fullPath);
-        return $this->processTemplate($content); // Process the included template
+        return $this->processTemplate($content);
     }
     
     private function replaceVariable($matches) {
         $path = $matches[1];
         $value = $this->getNestedValue($path);
-        return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+        // Handle null values
+        return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
     }
     
     private function processCondition($matches) {
