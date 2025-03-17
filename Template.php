@@ -126,14 +126,14 @@ class Template {
             $template
         );
     
-        // Process nested if conditions
+        // Process nested if conditions with improved pattern
         $iteration = 0;
         $lastTemplate = '';
         
         while ($template !== $lastTemplate && $iteration < $maxIterations) {
             $lastTemplate = $template;
             $template = preg_replace_callback(
-                '/\{%\s*if\s+(.+?)\s*%\}(.*?)\{%\s*endif\s*%\}/s',
+                '/\{%\s*if\s+(.+?)\s*%\}((?:(?!\{%\s*(?:if|endif)\s*%\}).)*?)(?:\{%\s*endif\s*%\})/s',
                 array($this, 'processCondition'),
                 $template
             );
@@ -203,50 +203,43 @@ class Template {
         $blocks = array(
             'if' => '',
             'elseif' => array(),
-            'else' => null
+            'else' => ''
         );
-        
-        // Split content by elseif and else tags
-        $pattern = '/\{%\s*(elseif|else)(?:\s+([^%]+))?\s*%\}/';
+    
+        // Split content into if/elseif/else blocks
+        $pattern = '/\{%\s*(elseif|else)\s*([^%]*?)\s*%\}/';
         $parts = preg_split($pattern, $content, -1, PREG_SPLIT_DELIM_CAPTURE);
-        
+    
         // First part is always the if content
         $blocks['if'] = trim($parts[0]);
-        
+    
         // Process remaining parts
-        $count = count($parts);
-        for ($i = 1; $i < $count; $i += 3) {
-            if (!isset($parts[$i])) {
-                break;
-            }
-            
-            if ($parts[$i] === 'elseif' && isset($parts[$i + 1])) {
+        for ($i = 1; $i < count($parts); $i += 3) {
+            if (!isset($parts[$i])) break;
+    
+            if ($parts[$i] === 'elseif' && isset($parts[$i + 1], $parts[$i + 2])) {
                 $blocks['elseif'][] = array(
                     'condition' => trim($parts[$i + 1]),
-                    'content' => isset($parts[$i + 2]) ? trim($parts[$i + 2]) : ''
+                    'content' => trim($parts[$i + 2])
                 );
-            } elseif ($parts[$i] === 'else') {
-                $blocks['else'] = isset($parts[$i + 2]) ? trim($parts[$i + 2]) : '';
-                break;
+            } elseif ($parts[$i] === 'else' && isset($parts[$i + 2])) {
+                $blocks['else'] = trim($parts[$i + 2]);
+                break; // Stop after else block
             }
         }
-        
+    
         return $blocks;
     }
     
-    private function evaluateCondition($condition) {
-        $parts = explode('&&', $condition);
-        
-        foreach ($parts as $part) {
-            if (!$this->evaluateSingleCondition(trim($part))) {
-                return false;
-            }
-        }
-        
-        return true;
-    }
-    
     private function evaluateSingleCondition($condition) {
+        // Handle negation first
+        $isNegated = false;
+        if (strpos($condition, '!') === 0) {
+            $isNegated = true;
+            $condition = ltrim(substr($condition, 1));
+        }
+    
+        // Check for comparison operators
         if (preg_match('/(.+?)\s*(===|==|>|<|>=|<=)\s*(.+)/', $condition, $matches)) {
             $left = trim($matches[1]);
             $operator = $matches[2];
@@ -265,37 +258,34 @@ class Template {
                 $rightValue = $right;
             }
             
+            $result = false;
             switch ($operator) {
-                case '===':
-                    return $leftValue === $rightValue;
-                case '==':
-                    return $leftValue == $rightValue;
-                case '>':
-                    if (is_numeric($leftValue) && is_numeric($rightValue)) {
-                        return (float)$leftValue > (float)$rightValue;
-                    }
-                    return false;
-                case '<':
-                    if (is_numeric($leftValue) && is_numeric($rightValue)) {
-                        return (float)$leftValue < (float)$rightValue;
-                    }
-                    return false;
-                case '>=':
-                    if (is_numeric($leftValue) && is_numeric($rightValue)) {
-                        return (float)$leftValue >= (float)$rightValue;
-                    }
-                    return false;
-                case '<=':
-                    if (is_numeric($leftValue) && is_numeric($rightValue)) {
-                        return (float)$leftValue <= (float)$rightValue;
-                    }
-                    return false;
-                default:
-                    return false;
+                case '===': $result = $leftValue === $rightValue; break;
+                case '==': $result = $leftValue == $rightValue; break;
+                case '>': $result = is_numeric($leftValue) && is_numeric($rightValue) ? (float)$leftValue > (float)$rightValue : false; break;
+                case '<': $result = is_numeric($leftValue) && is_numeric($rightValue) ? (float)$leftValue < (float)$rightValue : false; break;
+                case '>=': $result = is_numeric($leftValue) && is_numeric($rightValue) ? (float)$leftValue >= (float)$rightValue : false; break;
+                case '<=': $result = is_numeric($leftValue) && is_numeric($rightValue) ? (float)$leftValue <= (float)$rightValue : false; break;
+            }
+            return $isNegated ? !$result : $result;
+        }
+        
+        // Simple boolean check
+        $value = $this->getNestedValue(trim($condition));
+        $result = !empty($value);
+        return $isNegated ? !$result : $result;
+    }
+    
+    private function evaluateCondition($condition) {
+        $parts = explode('&&', $condition);
+        
+        foreach ($parts as $part) {
+            if (!$this->evaluateSingleCondition(trim($part))) {
+                return false;
             }
         }
         
-        return (bool)$this->getNestedValue(trim($condition));
+        return true;
     }
     
     private function getNestedValue($path) {
