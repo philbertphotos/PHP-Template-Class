@@ -277,15 +277,29 @@ class Template {
     }
     
     private function evaluateCondition($condition) {
-        $parts = explode('&&', $condition);
+        // Split by OR operator first
+        $orParts = explode('||', $condition);
         
-        foreach ($parts as $part) {
-            if (!$this->evaluateSingleCondition(trim($part))) {
-                return false;
+        foreach ($orParts as $orPart) {
+            // Split by AND operator
+            $andParts = explode('&&', trim($orPart));
+            
+            // Check all AND conditions
+            $andResult = true;
+            foreach ($andParts as $part) {
+                if (!$this->evaluateSingleCondition(trim($part))) {
+                    $andResult = false;
+                    break;
+                }
+            }
+            
+            // If any OR condition is true, return true
+            if ($andResult) {
+                return true;
             }
         }
         
-        return true;
+        return false;
     }
     
     private function getNestedValue($path) {
