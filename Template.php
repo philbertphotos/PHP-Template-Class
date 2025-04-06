@@ -8,7 +8,7 @@
  * @copyright Copyright (c) 2024-?
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      https://github.com/oxcakmak/PHP-Template-Class
- * @version   1.1.0
+ * @version   1.1.1
  */
 class Template {
     private $variables = [];
@@ -58,7 +58,7 @@ class Template {
         // Process nested for loops (from innermost to outermost)
         while ($iteration < $maxIterations) {
             // Find all for loops in the template
-            if (!preg_match_all('/\{%\s*for\s+(\w+)\s+in\s+([a-zA-Z0-9._]+)\s*%\}(.*?)\{%\s*endfor\s*%\}/s', $template, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+            if (!preg_match_all('/\{%\s*for\s+(\w+)\s+in\s+([a-zA-Z0-9._]+)\s*%\}(.*)\{%\s*endfor\s*%\}/s', $template, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
                 break;
             }
     
