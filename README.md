@@ -102,6 +102,7 @@ echo $template->load('home');
 - `>=` Greater than or equal
 - `<=` Less than or equal
 - `&&` Logical AND
+- `||` Logical OR
 
 #### For loop
 ```html
