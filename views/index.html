@@ -1,0 +1,188 @@
+{{ inc("partials/header") }}
+
+<div class="container">
+    <!-- Basic Variable Usage -->
+    <section class="welcome-section">
+        <h1>Welcome, {{ user.name }}!</h1>
+        
+        <!-- Different variable access methods -->
+        <div class="user-info">
+            <p>Account Balance: ${{ user.details.balance }} (dot notation)</p>
+            <p>Account Balance: ${{ user[details][balance] }} (bracket notation)</p>
+            <p>Account Balance: ${{ user[details].balance }} (mixed notation)</p>
+        </div>
+        
+        <!-- Function calls -->
+        <div class="function-examples">
+            <p>Name in uppercase: {{ strtoupper(user.name) }}</p>
+            <p>Formatted balance: ${{ number_format(user.details.balance, 2) }}</p>
+            <p>Join date: {{ date("F j, Y", strtotime(user.details.joined)) }}</p>
+        </div>
+    </section>
+    
+    <!-- Conditional Logic Examples -->
+    <section class="conditional-section">
+        <h2>Conditional Content</h2>
+        
+        <!-- Simple condition -->
+        {% if user.status === "active" %}
+            <div class="alert alert-success">Your account is active!</div>
+        {% endif %}
+        
+        <!-- If-else condition -->
+        {% if user.notifications > 0 %}
+            <div class="alert alert-info">You have {{ user.notifications }} unread notifications</div>
+        {% else %}
+            <div class="alert alert-secondary">You have no new notifications</div>
+        {% endif %}
+        
+        <!-- If-elseif-else condition -->
+        {% if user.details.balance <= 0 %}
+            <div class="alert alert-danger">Your account balance is empty!</div>
+        {% elseif user.details.balance < 100 %}
+            <div class="alert alert-warning">Your account balance is low</div>
+        {% elseif user.details.balance < 500 %}
+            <div class="alert alert-info">Your account balance is good</div>
+        {% else %}
+            <div class="alert alert-success">Your account balance is excellent!</div>
+        {% endif %}
+        
+        <!-- Nested conditions -->
+        {% if user.details.verified === true %}
+            <div class="verified-section">
+                <h3>Verified Account Benefits</h3>
+                {% if user.details.level === "premium" %}
+                    <p>You have premium benefits!</p>
+                    {% if user.details.balance > 1000 %}
+                        <p>You qualify for our VIP program</p>
+                    {% endif %}
+                {% else %}
+                    <p>Consider upgrading to premium for more benefits</p>
+                {% endif %}
+            </div>
+        {% endif %}
+        
+        <!-- Complex conditions with AND/OR -->
+        {% if user.details.verified === true && (user.details.balance > 1000 || user.details.level === "premium") %}
+            <div class="special-offer">
+                <h3>Special Offer Available!</h3>
+                <p>You qualify for our exclusive discount program.</p>
+            </div>
+        {% endif %}
+        
+        <!-- Negation example -->
+        {% if !user.details.verified %}
+            <div class="alert alert-warning">Please verify your account to access all features</div>
+        {% endif %}
+        
+        <!-- Boolean check -->
+        {% if user.preferences.notifications %}
+            <p>You will receive email notifications</p>
+        {% endif %}
+        
+        <!-- Weekend special example -->
+        {% if is_weekend %}
+            <div class="weekend-special">
+                <h3>Weekend Special Offer!</h3>
+                <p>Enjoy 10% off all products this weekend.</p>
+            </div>
+        {% endif %}
+    </section>
+    
+    <!-- Loop Examples -->
+    <section class="products-section">
+        <h2>Our Products</h2>
+        
+        <!-- Basic for loop -->
+        <div class="product-grid">
+            {% for product in products %}
+                <div class="product-card {% if !product.inStock %}out-of-stock{% endif %}">
+                    <h3>{{ product.name }}</h3>
+                    <p class="price">${{ product.price }}</p>
+                    <p class="description">{{ product.description }}</p>
+                    
+                    <!-- Loop metadata usage -->
+                    <span class="product-number">Product {{ loop.index }} of {{ products.length }}</span>
+                    
+                    {% if loop.first %}
+                        <span class="badge badge-new">NEW!</span>
+                    {% endif %}
+                    
+                    {% if loop.last %}
+                        <span class="badge badge-last">LAST ITEM!</span>
+                    {% endif %}
+                    
+                    <!-- Nested loop -->
+                    <div class="product-colors">
+                        <h4>Available Colors:</h4>
+                        <ul class="color-list">
+                            {% for color in product.colors %}
+                                <li class="color-item {% if loop.first %}primary-color{% endif %}">
+                                    {{ color }}
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    
+                    <!-- Another nested loop -->
+                    <div class="product-features">
+                        <h4>Features:</h4>
+                        <ul class="feature-list">
+                            {% for feature in product.features %}
+                                <li>{{ feature }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    
+                    <!-- Conditional inside loop -->
+                    {% if product.inStock %}
+                        <button class="btn btn-primary">Add to Cart</button>
+                    {% else %}
+                        <button class="btn btn-secondary" disabled>Out of Stock</button>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+    </section>
+    
+    <!-- Categories with nested loops -->
+    <section class="categories-section">
+        <h2>Product Categories</h2>
+        
+        <div class="category-list">
+            {% for category in categories %}
+                <div class="category">
+                    <h3>{{ category.name }}</h3>
+                    
+                    <ul class="subcategory-list">
+                        {% for subcategory in category.subcategories %}
+                            <li class="subcategory-item">
+                                {{ subcategory }}
+                                {% if loop.first %}
+                                    <span class="badge badge-featured">Featured</span>
+                                {% endif %}
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endfor %}
+        </div>
+    </section>
+    
+    <!-- Site settings example -->
+    <section class="site-info">
+        <h2>About {{ settings.site_name }}</h2>
+        <p>Contact us at: {{ settings.contact_email }}</p>
+        
+        <div class="social-links">
+            <h3>Follow Us:</h3>
+            <ul>
+                {% for platform, url in settings.social_media %}
+                    <li><a href="{{ url }}">{{ platform }}</a></li>
+                {% endfor %}
+            </ul>
+        </div>
+    </section>
+</div>
+
+{{ inc("partials/footer") }}
