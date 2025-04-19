@@ -8,7 +8,7 @@
  * @copyright Copyright (c) 2024-?
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      https://github.com/oxcakmak/PHP-Template-Class
- * @version   1.1.1
+ * @version   1.1.2
  */
 class Template {
     private $variables = [];
@@ -52,6 +52,27 @@ class Template {
         $template = preg_replace_callback(
             '/\{\{\s*inc\([\'"]([^\'"]+)[\'"]\)\s*\}\}/',
             array($this, 'processInclude'),
+            $template
+        );
+    
+        // Process function calls in variables
+        $template = preg_replace_callback(
+            '/\{\{\s*(\w+)\(([^)]+)\)\s*\}\}/',
+            array($this, 'processFunction'),
+            $template
+        );
+    
+        // Process variables with bracket notation first
+        $template = preg_replace_callback(
+            '/\{\{\s*([a-zA-Z0-9_]+(?:\[[^\]]+\])+(?:\.[a-zA-Z0-9_]+)*)\s*\}\}/',
+            array($this, 'replaceVariable'),
+            $template
+        );
+    
+        // Process regular variables (must come after bracket notation)
+        $template = preg_replace_callback(
+            '/\{\{\s*([a-zA-Z0-9._]+)\s*\}\}/',
+            array($this, 'replaceVariable'),
             $template
         );
     
@@ -313,14 +334,67 @@ class Template {
         return false;
     }
     
+    private function processFunction($matches) {
+        $functionName = trim($matches[1]);
+        $argument = trim($matches[2]);
+        
+        // Get the argument value (could be a variable path)
+        $argValue = $this->getNestedValue($argument);
+        
+        // Check if function exists
+        if (function_exists($functionName)) {
+            return call_user_func($functionName, $argValue);
+        }
+        
+        // If function doesn't exist, return a comment
+        return '<!-- Function not found: ' . htmlspecialchars($functionName) . ' -->';
+    }
+    
     private function getNestedValue($path) {
+        // Normalize path by handling mixed notation (brackets and dots)
+        // First, handle the case where we have brackets followed by dots
+        // Example: user[details].balance
+        $path = preg_replace_callback(
+            '/\[([^\[\]]+)\]\.([a-zA-Z0-9_]+)/', 
+            function($match) {
+                return '[' . $match[1] . '][' . $match[2] . ']';
+            }, 
+            $path
+        );
+        
+        // Fix mismatched brackets if present
+        $path = preg_replace('/\]\s*\]/', ']', $path);
+        $path = preg_replace('/\[\s*\[/', '[', $path);
+        
+        // Fix common syntax errors like mixed brackets
+        if (substr_count($path, '[') != substr_count($path, ']')) {
+            $path = preg_replace('/\]?\s*$/', '', $path); // Remove trailing mismatched bracket
+        }
+        
+        // Handle multi-level bracket notation
+        // Convert all bracket notation to dot notation for consistent processing
+        $path = preg_replace_callback(
+            '/\[([^\[\]]+)\]/', 
+            function($match) {
+                return '.' . trim($match[1], '"\'');
+            }, 
+            $path
+        );
+        
         $parts = explode('.', $path);
         $current = $this->variables;
 
         foreach ($parts as $part) {
+            if (empty($part)) continue; // Skip empty parts
+            
             if (is_array($current)) {
+                // Support both associative arrays and arrays with name/type structure
                 if (isset($current[$part])) {
                     $current = $current[$part];
+                } elseif (isset($current['name']) && $part === 'name') {
+                    $current = $current['name'];
+                } elseif (isset($current['type']) && $part === 'type') {
+                    $current = $current['type'];
                 } else {
                     return null;
                 }
