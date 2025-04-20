@@ -8,24 +8,55 @@
  * @copyright Copyright (c) 2024-?
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      https://github.com/oxcakmak/PHP-Template-Class
- * @version   1.1.4
+ * @version   1.1.5
  */
 class Template {
+    /** @var array Variables available to templates */
     private $variables = [];
+    
+    /** @var string Directory containing template files */
     private $templateDir;
+    
+    /** @var string File extension for template files */
     private $templateExt;
-    private $maxMemory = 268435456; // 256MB default limit
-    private $maxIterations = 20; // Increased from 10 to handle more complex templates
-    private $errorMode = 'comment'; // 'comment', 'exception', or 'silent'
+    
+    /** @var int Maximum memory usage allowed (256MB default) */
+    private $maxMemory = 268435456;
+    
+    /** @var int Maximum iterations for recursive template processing */
+    private $maxIterations = 10;
+    
+    /** @var string Error handling mode: 'comment', 'exception', or 'silent' */
+    private $errorMode = 'comment';
+    
+    /** @var bool Enable debug mode for detailed error messages */
     private $debugMode = false;
     
+    /**
+     * Constructor
+     *
+     * @param string $templateDir Directory containing template files
+     * @param string $templateExt File extension for template files (default: html)
+     * @param array $options Additional options for template engine
+     * @throws Exception If template directory is not specified or does not exist
+     */
     public function __construct($templateDir, $templateExt = 'html', $options = []) {
         if (empty($templateDir)) {
             throw new Exception("Template directory must be specified");
         }
         
-        $this->templateDir = rtrim($templateDir, '/') . '/';
-        $this->templateExt = ltrim($templateExt, '.');
+        // Ensure template directory ends with a directory separator
+        if (substr($templateDir, -1) !== DIRECTORY_SEPARATOR) {
+            $templateDir .= DIRECTORY_SEPARATOR;
+        }
+        
+        // Check if template directory exists
+        if (!is_dir($templateDir)) {
+            throw new Exception("Template directory does not exist: {$templateDir}");
+        }
+        
+        $this->templateDir = $templateDir;
+        $this->templateExt = $templateExt;
         
         // Set options if provided
         if (isset($options['maxMemory'])) {
@@ -40,16 +71,45 @@ class Template {
             $this->errorMode = $options['errorMode'];
         }
         
-        if (!is_dir($this->templateDir)) {
-            throw new Exception("Template directory does not exist: {$this->templateDir}");
+        if (isset($options['debugMode'])) {
+            $this->debugMode = (bool)$options['debugMode'];
         }
     }
     
-    public function assign($key, $value) {
-        $this->variables[$key] = $value;
+    /**
+     * Assign a variable to the template
+     *
+     * @param string $name Variable name
+     * @param mixed $value Variable value
+     * @return Template For method chaining
+     */
+    public function assign($name, $value) {
+        $this->variables[$name] = $value;
         return $this;
     }
     
+    /**
+     * Assign multiple variables to the template
+     *
+     * @param array $variables Associative array of variables
+     * @return Template For method chaining
+     */
+    public function assignMultiple($variables) {
+        if (is_array($variables)) {
+            foreach ($variables as $name => $value) {
+                $this->variables[$name] = $value;
+            }
+        }
+        return $this;
+    }
+    
+    /**
+     * Load and process a template file
+     *
+     * @param string $templateName Name of the template file (without extension)
+     * @return string Processed template content
+     * @throws Exception If template file does not exist
+     */
     public function load($templateName) {
         $templatePath = $this->templateDir . $templateName . '.' . $this->templateExt;
         
@@ -57,165 +117,197 @@ class Template {
             throw new Exception("Template file not found: {$templatePath}");
         }
         
-        $template = file_get_contents($templatePath);
-        return $this->processTemplate($template);
+        $content = file_get_contents($templatePath);
+        return $this->processTemplate($content);
     }
     
+    /**
+     * Process template content
+     *
+     * @param string $template Template content to process
+     * @return string Processed template content
+     */
     private function processTemplate($template) {
-        // Check memory usage before processing
-        $this->checkMemoryUsage();
-        
-        try {
-            // Process includes first
-            $template = preg_replace_callback(
-                '/\{\{\s*inc\([\'"]([^\'"]+)[\'"]\)\s*\}\}/',
-                array($this, 'processInclude'),
-                $template
-            );
-            
-            // Process function calls in variables with improved pattern
-            $template = preg_replace_callback(
-                '/\{\{\s*([a-zA-Z0-9_]+)\(([^{}]*(?:\{[^{}]*\}[^{}]*)*)\)\s*\}\}/',
-                array($this, 'processFunction'),
-                $template
-            );
-            
-            // Process variables with bracket notation first
-            $template = preg_replace_callback(
-                '/\{\{\s*([a-zA-Z0-9_]+(?:\[[^\]]+\])+(?:\.[a-zA-Z0-9_]+)*)\s*\}\}/',
-                array($this, 'replaceVariable'),
-                $template
-            );
-            
-            // Process regular variables (must come after bracket notation)
-            $template = preg_replace_callback(
-                '/\{\{\s*([a-zA-Z0-9._]+)\s*\}\}/',
-                array($this, 'replaceVariable'),
-                $template
-            );
-            
-            // Process nested for loops (from innermost to outermost)
-            $template = $this->processForLoops($template);
-            
-            // Process variables again after loops
-            $template = preg_replace_callback(
-                '/\{\{\s*([a-zA-Z0-9._]+)\s*\}\}/',
-                array($this, 'replaceVariable'),
-                $template
-            );
-            
-            // Process function calls again after loops
-            $template = preg_replace_callback(
-                '/\{\{\s*([a-zA-Z0-9_]+)\(([^{}]*(?:\{[^{}]*\}[^{}]*)*)\)\s*\}\}/',
-                array($this, 'processFunction'),
-                $template
-            );
-            
-            // Process nested if conditions with improved pattern
-            $template = $this->processIfConditions($template);
-            
-            // Clean up any remaining tags and extra whitespace - OPTIMIZED to prevent memory issues
-            $template = $this->cleanupTemplate($template);
-            
-        } catch (Exception $e) {
-            if ($this->errorMode === 'exception') {
-                throw $e;
-            } elseif ($this->errorMode === 'comment') {
-                $template = "<!-- Template processing error: " . htmlspecialchars($e->getMessage()) . " -->";
-            }
-            // In 'silent' mode, we just return the template as-is
-        }
-        
-        return $template;
-    }
-    
-    private function processForLoops($template) {
         $iteration = 0;
         $lastTemplate = '';
-    
+        
         while ($template !== $lastTemplate && $iteration < $this->maxIterations) {
-            $lastTemplate = $template;
             $this->checkMemoryUsage();
-    
-            $processed = false;
-    
-            // Key-value for loop: {% for key, value in array %}
-            $patternKeyValue = '/\{%\s*for\s+(\w+)\s*,\s*(\w+)\s+in\s+([a-zA-Z0-9._\[\]]+)\s*%\}(.*?)\{%\s*endfor\s*%\}/si';
-            if (preg_match_all($patternKeyValue, $template, $kvMatches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
-                // Process from last to first to avoid offset issues
-                usort($kvMatches, function($a, $b) {
-                    return $b[0][1] - $a[0][1];
-                });
-                foreach ($kvMatches as $match) {
-                    $fullMatch = $match[0][0];
-                    $offset = $match[0][1];
-                    $keyName = $match[1][0];
-                    $valueName = $match[2][0];
-                    $arrayPath = $match[3][0];
-                    $content = $match[4][0];
-    
-                    // Support both dot and bracket notation
-                    $array = $this->getNestedValue($arrayPath);
-                    $result = '';
-                    if (is_array($array)) {
-                        $result = $this->processKeyValueLoop($array, $keyName, $valueName, $arrayPath, $content);
-                    }
-                    $template = substr_replace($template, $result, $offset, strlen($fullMatch));
-                    $processed = true;
-                }
-            }
-    
-            // Regular for loop: {% for item in array %}
-            $patternRegular = '/\{%\s*for\s+(\w+)\s+in\s+([a-zA-Z0-9._\[\]]+)\s*%\}(.*?)\{%\s*endfor\s*%\}/si';
-            if (preg_match_all($patternRegular, $template, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
-                // Process from last to first to avoid offset issues
-                usort($matches, function($a, $b) {
-                    return $b[0][1] - $a[0][1];
-                });
-                foreach ($matches as $match) {
-                    $fullMatch = $match[0][0];
-                    $offset = $match[0][1];
-                    $itemName = $match[1][0];
-                    $arrayPath = $match[2][0];
-                    $content = $match[3][0];
-    
-                    // Support both dot and bracket notation
-                    $array = $this->getNestedValue($arrayPath);
-                    $result = '';
-                    if (is_array($array)) {
-                        $result = $this->processLoop($array, $itemName, $arrayPath, $content);
-                    }
-                    $template = substr_replace($template, $result, $offset, strlen($fullMatch));
-                    $processed = true;
-                }
-            }
-    
-            if (!$processed) {
-                break;
-            }
+            
+            $lastTemplate = $template;
+            
+            // Process includes first
+            $template = preg_replace_callback(
+                '/\{\{\s*inc\(([^)]+)\)\s*\}\}/',
+                array($this, 'processFunction'),
+                $template
+            );
+            
+            // Process function calls with parameters - FIX HERE
+            $template = preg_replace_callback(
+                '/\{\{\s*([a-zA-Z0-9_]+)\s*\(\s*(.*?)\s*\)\s*\}\}/s',
+                array($this, 'processFunctionCall'),
+                $template
+            );
+            
+            // Process for loops
+            $template = $this->processForLoops($template);
+            
+            // Process if conditions
+            $template = $this->processIfConditions($template);
+            
+            // Process variables
+            $template = $this->processVariablesInContent($template);
+            
             $iteration++;
         }
+        
+        return $this->cleanupTemplate($template);
+    }
     
+    /**
+     * Process for loops in templates
+     *
+     * @param string $template Template content to process
+     * @return string Processed template content
+     */
+    private function processForLoops($template) {
+        // Process key-value for loops first
+        $template = preg_replace_callback(
+            '/\{%\s*for\s+([a-zA-Z0-9_]+)\s*,\s*([a-zA-Z0-9_]+)\s+in\s+([a-zA-Z0-9._\[\]]+)\s*%\}(.*?)\{%\s*endfor\s*%\}/s',
+            array($this, 'processKeyValueForLoop'),
+            $template
+        );
+        
+        // Then process regular for loops
+        $template = preg_replace_callback(
+            '/\{%\s*for\s+([a-zA-Z0-9_]+)\s+in\s+([a-zA-Z0-9._\[\]]+)\s*%\}(.*?)\{%\s*endfor\s*%\}/s',
+            array($this, 'processForLoop'),
+            $template
+        );
+        
         return $template;
     }
     
     /**
-     * Process a key-value loop (for key, value in array)
+     * Process a regular for loop
+     *
+     * @param array $matches Regex matches from preg_replace_callback
+     * @return string The processed loop content
      */
-    private function processKeyValueLoop($array, $keyName, $valueName, $arrayPath, $content) {
+    private function processForLoop($matches) {
+        $itemName = $matches[1];
+        $arrayPath = $matches[2];
+        $content = $matches[3];
+        
+        // Get the array to iterate over
+        $array = null;
+        
+        // Special handling for nested loops
+        if (strpos($arrayPath, '.') !== false) {
+            $parts = explode('.', $arrayPath);
+            $parentVar = $parts[0];
+            $childKey = $parts[1];
+            
+            // Check if we're inside a loop context
+            if (isset($this->variables[$parentVar])) {
+                $parent = $this->variables[$parentVar];
+                
+                // Direct access to the nested array if parent is an array with the child key
+                if (is_array($parent) && isset($parent[$childKey])) {
+                    $array = $parent[$childKey];
+                }
+            }
+        }
+        
+        // If we didn't find a nested array, try the standard approach
+        if ($array === null) {
+            $array = $this->getNestedValue($arrayPath);
+        }
+        
+        // If not an array or empty, return appropriate message
+        if (!is_array($array)) {
+            if ($this->debugMode) {
+                return "<!-- Debug: Array '{$arrayPath}' not found or not an array -->";
+            }
+            return '';
+        }
+        
+        return $this->processLoop($array, $itemName, $arrayPath, $content);
+    }
+
+    /**
+     * Helper method to get a property from an array using a dot notation path
+     *
+     * @param array $array The array to get the property from
+     * @param string $path The path to the property (dot notation)
+     * @return mixed The property value or null if not found
+     */
+    private function getPropertyFromArray($array, $path) {
+        $parts = explode('.', $path);
+        $current = $array;
+        
+        foreach ($parts as $part) {
+            if (empty($part)) continue;
+            
+            if (is_array($current) && array_key_exists($part, $current)) {
+                $current = $current[$part];
+            } else {
+                return null;
+            }
+        }
+        
+        return $current;
+    }
+    
+    /**
+     * Process a key-value for loop
+     *
+     * @param array $matches Regex matches from preg_replace_callback
+     * @return string The processed loop content
+     */
+    private function processKeyValueForLoop($matches) {
+        $keyName = $matches[1];
+        $valueName = $matches[2];
+        $arrayPath = $matches[3];
+        $content = $matches[4];
+        
+        // Get the array to iterate over
+        $array = $this->getNestedValue($arrayPath);
+        
+        // If not an array or empty, return appropriate message
+        if (!is_array($array)) {
+            if ($this->debugMode) {
+                return "<!-- Debug: Array '{$arrayPath}' not found or not an array -->";
+            }
+            return '';
+        }
+        
+        return $this->processKeyValueLoop($array, $keyName, $valueName, $arrayPath, $content);
+    }
+    
+        /**
+     * Process a loop with an array
+     *
+     * @param array $array The array to iterate over
+     * @param string $itemName The name of the item variable
+     * @param string $arrayPath The path to the array (for debugging)
+     * @param string $content The content to process for each iteration
+     * @return string The processed content
+     */
+    private function processLoop($array, $itemName, $arrayPath, $content) {
         $result = '';
         $originalVars = $this->variables; // Backup original scope
         $arrayLength = count($array);
         $index = 0;
-
-        foreach ($array as $key => $value) {
+        
+        foreach ($array as $key => $item) {
             $this->checkMemoryUsage();
-
+            
             // Create new scope for this iteration
             $iterationVars = $originalVars;
-            $iterationVars[$keyName] = $key;
-            $iterationVars[$valueName] = $value;
-
+            $iterationVars[$itemName] = $item;
+            
             // Add loop metadata
             $iterationVars['loop'] = [
                 'index' => $index + 1,
@@ -224,83 +316,119 @@ class Template {
                 'length' => $arrayLength,
                 'parent' => isset($originalVars['loop']) ? $originalVars['loop'] : null
             ];
-
+            
             // Set the current scope for variable replacement
             $this->variables = $iterationVars;
-
-            // Process the template with the current variables
-            $processedContent = $this->processTemplate($content);
+            
+            // Process the content for this iteration
+            $processedContent = $content;
+            
+            // Process nested loops first
+            $processedContent = $this->processForLoops($processedContent);
+            
+            // Process if conditions
+            $processedContent = $this->processIfConditions($processedContent);
+            
+            // Process variables
+            $processedContent = $this->processVariablesInContent($processedContent);
+            
             $result .= $processedContent;
             
             $index++;
         }
-
+        
         // Restore original variables scope
         $this->variables = $originalVars;
-
+        
         return $result;
     }
 
-    private function processLoop($array, $itemName, $arrayPath, $content) {
+    /**
+     * Get a property from an item (array or object)
+     *
+     * @param mixed $item The item to get the property from
+     * @param string $property The property path (e.g. "colors.0", "features")
+     * @return mixed The property value
+     */
+    private function getPropertyFromItem($item, $property) {
+        $parts = explode('.', $property);
+        $current = $item;
+        
+        foreach ($parts as $part) {
+            if (is_array($current) && array_key_exists($part, $current)) {
+                $current = $current[$part];
+            } elseif (is_object($current) && property_exists($current, $part)) {
+                $current = $current->$part;
+            } else {
+                if ($this->debugMode) {
+                    $type = is_object($current) ? get_class($current) : gettype($current);
+                    error_log("Template Debug: Property '{$part}' not found in {$type}");
+                }
+                return null;
+            }
+        }
+        
+        return $current;
+    }
+
+    /**
+     * Process a key-value loop (for key, value in array)
+     */
+    private function processKeyValueLoop($array, $keyName, $valueName, $arrayPath, $content) {
         $result = '';
         $originalVars = $this->variables; // Backup original scope
         $arrayLength = count($array);
         $index = 0;
-
-        // Use array_values to ensure sequential numeric keys for index calculation if original keys are not sequential
-        $arrayValues = array_values($array);
-
-        foreach ($arrayValues as $item) {
+        
+        foreach ($array as $key => $value) {
             $this->checkMemoryUsage();
-
+            
             // Create new scope for this iteration
             $iterationVars = $originalVars;
-            $iterationVars[$itemName] = $item;
-
+            $iterationVars[$keyName] = $key;
+            $iterationVars[$valueName] = $value;
+            
             // Add loop metadata
             $iterationVars['loop'] = [
                 'index' => $index + 1,
                 'first' => ($index === 0),
                 'last' => ($index === $arrayLength - 1),
                 'length' => $arrayLength,
-                'parent' => isset($originalVars['loop']) ? $originalVars['loop'] : null // Support nested loops
+                'parent' => isset($originalVars['loop']) ? $originalVars['loop'] : null
             ];
-
+            
             // Set the current scope for variable replacement
             $this->variables = $iterationVars;
-
-            // Process the template with the current variables
-            $processedContent = $this->processTemplate($content);
+            
+            // Process the content for this iteration
+            $processedContent = $content;
+            
+            // Process nested loops first
+            $processedContent = $this->processForLoops($processedContent);
+            
+            // Process if conditions
+            $processedContent = $this->processIfConditions($processedContent);
+            
+            // Process variables
+            $processedContent = $this->processVariablesInContent($processedContent);
+            
             $result .= $processedContent;
             
             $index++;
         }
-
+        
         // Restore original variables scope
         $this->variables = $originalVars;
-
+        
         return $result;
     }
-
+    
     /**
-     * Helper method to replace variables within a given string using the current scope.
+     * Process if conditions in templates
+     *
+     * @param string $template The template to process
+     * @return string The processed template
      */
-    private function processVariablesInString($string) {
-        // Process variables with bracket notation first
-        $string = preg_replace_callback(
-            '/\{\{\s*([a-zA-Z0-9_]+(?:\[[^\]]+\])+(?:\.[a-zA-Z0-9_]+)*)\s*\}\}/',
-            array($this, 'replaceVariable'),
-            $string
-        );
-        // Process regular variables (must come after bracket notation)
-        $string = preg_replace_callback(
-            '/\{\{\s*([a-zA-Z0-9._]+)\s*\}\}/',
-            array($this, 'replaceVariable'),
-            $string
-        );
-        return $string;
-    }
-
     private function processIfConditions($template) {
         $iteration = 0;
         $lastTemplate = '';
@@ -318,166 +446,257 @@ class Template {
             );
             
             // Then process if-elseif-else blocks (more complex case)
-            // This pattern matches the entire if-elseif-else structure
-            $ifElseifPattern = '/\{%\s*if\s+(.+?)\s*%\}(.*?)(?:\{%\s*elseif\s+(.+?)\s*%\}(.*?))+(?:\{%\s*else\s*%\}(.*?))?\{%\s*endif\s*%\}/s';
-            
-            if (preg_match_all($ifElseifPattern, $template, $complexMatches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
-                // Process from end to beginning to avoid offset issues
-                usort($complexMatches, function($a, $b) {
-                    return $b[0][1] - $a[0][1]; // Sort by position in descending order
-                });
-                
-                foreach ($complexMatches as $match) {
-                    $fullMatch = $match[0][0];
-                    $offset = $match[0][1];
-                    $length = strlen($fullMatch);
-                    
-                    // Extract all parts of the complex condition
-                    $blocks = $this->parseIfElseifElseBlocks($fullMatch);
-                    
-                    // Evaluate conditions in order
-                    $result = '';
-                    if ($this->evaluateCondition($blocks['if']['condition'])) {
-                        $result = $this->processTemplate($blocks['if']['content']);
-                    } else {
-                        $elseifMatched = false;
-                        foreach ($blocks['elseif'] as $elseif) {
-                            if ($this->evaluateCondition($elseif['condition'])) {
-                                $result = $this->processTemplate($elseif['content']);
-                                $elseifMatched = true;
-                                break;
-                            }
-                        }
-                        
-                        if (!$elseifMatched && isset($blocks['else'])) {
-                            $result = $this->processTemplate($blocks['else']);
-                        }
-                    }
-                    
-                    // Replace the entire if-elseif-else block with the result
-                    $template = substr_replace($template, $result, $offset, $length);
-                }
-            }
+            $template = preg_replace_callback(
+                '/\{%\s*if\s+(.+?)\s*%\}(.*?)(?:\{%\s*elseif\s+(.+?)\s*%\}(.*?))*(?:\{%\s*else\s*%\}(.*?))?\{%\s*endif\s*%\}/s',
+                array($this, 'processComplexCondition'),
+                $template
+            );
             
             $iteration++;
-        }
-        
-        // Clean up any remaining if conditions that couldn't be processed
-        if ($this->debugMode === false) {
-            // More specific patterns to avoid over-cleaning
-            $template = preg_replace('/\{%\s*if\s+[^%]+\s*%\}.*?\{%\s*endif\s*%\}/s', '', $template);
-            $template = preg_replace('/\{%\s*(?:else|elseif\s+[^%]+|endif)\s*%\}/s', '', $template);
         }
         
         return $template;
     }
     
-    private function parseIfElseifElseBlocks($content) {
-        $blocks = [
-            'if' => ['condition' => '', 'content' => ''],
-            'elseif' => [],
-            'else' => ''
-        ];
+    /**
+     * Process a simple if-else condition
+     *
+     * @param array $matches Regex matches from preg_replace_callback
+     * @return string The processed content based on the condition
+     */
+    private function processSimpleCondition($matches) {
+        $condition = $matches[1];
+        $ifContent = isset($matches[2]) ? $matches[2] : '';
+        $elseContent = isset($matches[3]) ? $matches[3] : '';
         
-        // Extract the if condition
-        if (preg_match('/\{%\s*if\s+(.+?)\s*%\}/s', $content, $ifMatch)) {
-            $blocks['if']['condition'] = trim($ifMatch[1]);
-        }
-        
-        // Extract content between if and first elseif/else/endif
-        if (preg_match('/\{%\s*if\s+.+?\s*%\}(.*?)(?:\{%\s*(?:elseif|else|endif)\s*.*?%\})/s', $content, $ifContentMatch)) {
-            $blocks['if']['content'] = $ifContentMatch[1];
-        }
-        
-        // Extract all elseif blocks with their conditions and content
-        preg_match_all('/\{%\s*elseif\s+(.+?)\s*%\}(.*?)(?:\{%\s*(?:elseif|else|endif)\s*.*?%\})/s', $content, $elseifMatches, PREG_SET_ORDER);
-        
-        foreach ($elseifMatches as $match) {
-            $blocks['elseif'][] = [
-                'condition' => trim($match[1]),
-                'content' => $match[2]
-            ];
-        }
-        
-        // Extract else content if it exists
-        if (preg_match('/\{%\s*else\s*%\}(.*?)\{%\s*endif\s*%\}/s', $content, $elseMatch)) {
-            $blocks['else'] = $elseMatch[1];
-        }
-        
-        return $blocks;
-    }
-    
-    private function cleanupTemplate($template) {
-        // Process in smaller chunks to avoid memory issues
-        $chunks = $this->splitTemplateIntoChunks($template, 10000);
-        $processedChunks = [];
-        
-        foreach ($chunks as $chunk) {
-            // Clean up any remaining tags
-            $chunk = preg_replace('/\{%\s*(?:else|elseif|endif)\s*%\}/s', '', $chunk);
+        try {
+            $result = $this->evaluateCondition($condition);
             
-            // Clean up whitespace more efficiently
-            $chunk = preg_replace('/^\s+|\s+$/m', '', $chunk);
-            
-            $processedChunks[] = $chunk;
+            if ($result) {
+                return $this->processTemplate($ifContent);
+            } else {
+                return $this->processTemplate($elseContent);
+            }
+        } catch (Exception $e) {
+            if ($this->errorMode === 'exception') {
+                throw $e;
+            } elseif ($this->errorMode === 'comment') {
+                return "<!-- Error processing condition '{$condition}': " . 
+                       htmlspecialchars($e->getMessage()) . " -->";
+            }
+            return '';
         }
-        
-        return implode('', $processedChunks);
     }
     
     /**
-     * Split a template string into smaller chunks to avoid memory issues
-     * 
-     * @param string $template The template to split
-     * @param int $chunkSize The maximum size of each chunk
-     * @return array An array of template chunks
+     * Process a complex if-elseif-else condition
+     *
+     * @param array $matches Regex matches from preg_replace_callback
+     * @return string The processed content based on the conditions
      */
-    private function splitTemplateIntoChunks($template, $chunkSize) {
-        $chunks = [];
-        $length = strlen($template);
-        
-        for ($i = 0; $i < $length; $i += $chunkSize) {
-            $chunks[] = substr($template, $i, $chunkSize);
-        }
-        
-        return $chunks;
-    }
-    
-    private function processInclude($matches) {
-        $includePath = $matches[1];
-        $fullPath = $this->templateDir . $includePath . '.' . $this->templateExt;
-        
-        if (!file_exists($fullPath)) {
-            // Handle null path
-            return '<!-- Include not found: ' . htmlspecialchars((string)$includePath) . ' -->';
-        }
+    private function processComplexCondition($matches) {
+        $ifCondition = $matches[1];
+        $ifContent = isset($matches[2]) ? $matches[2] : '';
         
         try {
-            $content = file_get_contents($fullPath);
-            return $this->processTemplate($content);
-        } catch (Exception $e) {
-            return '<!-- Error including ' . htmlspecialchars((string)$includePath) . ': ' . 
-                   htmlspecialchars($e->getMessage()) . ' -->';
-        }
-    }
-    
-    private function replaceVariable($matches) {
-        $path = $matches[1];
-        
-        try {
-            // Check if this is a nested property access within a loop item
-            if (strpos($path, '.') !== false) {
-                $parts = explode('.', $path);
-                $firstPart = $parts[0];
-                
-                // If the first part exists in variables, use getNestedValue
-                if (array_key_exists($firstPart, $this->variables)) {
-                    $value = $this->getNestedValue($path);
-                    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+            // Check if condition
+            if ($this->evaluateCondition($ifCondition)) {
+                return $this->processTemplate($ifContent);
+            }
+            
+            // Check for elseif conditions
+            $fullMatch = $matches[0];
+            if (preg_match_all('/\{%\s*elseif\s+(.+?)\s*%\}(.*?)(?=\{%\s*(?:elseif|else|endif)\s*%\})/s', $fullMatch, $elseifMatches, PREG_SET_ORDER)) {
+                foreach ($elseifMatches as $elseifMatch) {
+                    $elseifCondition = $elseifMatch[1];
+                    $elseifContent = $elseifMatch[2];
+                    
+                    if ($this->evaluateCondition($elseifCondition)) {
+                        return $this->processTemplate($elseifContent);
+                    }
                 }
             }
             
-            // Regular variable access
+            // Check for else content
+            if (preg_match('/\{%\s*else\s*%\}(.*?)(?=\{%\s*endif\s*%\})/s', $fullMatch, $elseMatch)) {
+                $elseContent = $elseMatch[1];
+                return $this->processTemplate($elseContent);
+            }
+            
+            return '';
+        } catch (Exception $e) {
+            if ($this->errorMode === 'exception') {
+                throw $e;
+            } elseif ($this->errorMode === 'comment') {
+                return "<!-- Error processing complex condition: " . 
+                       htmlspecialchars($e->getMessage()) . " -->";
+            }
+            return '';
+        }
+    }
+    
+    /**
+     * Evaluate a condition expression
+     *
+     * @param string $condition The condition to evaluate
+     * @return bool The result of the evaluation
+     */
+    private function evaluateCondition($condition) {
+        // Replace variables in the condition with their values
+        $condition = preg_replace_callback(
+            '/([a-zA-Z0-9._\[\]]+)/',
+            array($this, 'replaceConditionVariable'),
+            $condition
+        );
+        
+        // Replace operators for PHP evaluation
+        $condition = str_replace('===', '==', $condition);
+        $condition = str_replace('!==', '!=', $condition);
+        
+        // Convert logical operators to PHP syntax
+        $condition = str_replace(' and ', ' && ', $condition);
+        $condition = str_replace(' or ', ' || ', $condition);
+        $condition = str_replace(' not ', ' !', $condition);
+        
+        // Convert boolean literals to PHP syntax
+        $condition = str_replace(' true', ' true', $condition);
+        $condition = str_replace(' false', ' false', $condition);
+        
+        // Evaluate the condition safely
+        try {
+            // Add error suppression to prevent warnings
+            $result = @eval("return (bool)($condition);");
+            
+            // If eval failed, return false
+            if ($result === false && error_get_last() !== null) {
+                if ($this->debugMode) {
+                    error_log("Template Debug: Failed to evaluate condition: '{$condition}'");
+                }
+                return false;
+            }
+            
+            return $result;
+        } catch (Exception $e) {
+            if ($this->debugMode) {
+                error_log("Template Debug: Error evaluating condition '{$condition}': " . $e->getMessage());
+            }
+            return false;
+        }
+    }
+    
+    /**
+     * Replace variables in condition expressions
+     *
+     * @param array $matches Regex matches from preg_replace_callback
+     * @return string The value of the variable or the original string if not a variable
+     */
+    private function replaceConditionVariable($matches) {
+        $path = $matches[1];
+        
+        // Skip operators and literals
+        $operators = ['and', 'or', 'not', 'true', 'false', 'null'];
+        if (is_numeric($path) || in_array(strtolower($path), $operators)) {
+            return $path;
+        }
+        
+        // Handle string literals
+        if (preg_match('/^["\'].*["\']$/', $path)) {
+            return $path;
+        }
+        
+        // Get the value of the variable
+        $value = $this->getNestedValue($path);
+        
+        // Handle null values
+        if ($value === null) {
+            return 'null';
+        }
+        
+        // Handle boolean values
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+        
+        // Handle numeric values
+        if (is_numeric($value)) {
+            return $value;
+        }
+        
+        // Handle string values
+        if (is_string($value)) {
+            return "'" . addslashes($value) . "'";
+        }
+        
+        // Handle array values
+        if (is_array($value)) {
+            return !empty($value) ? 'true' : 'false';
+        }
+        
+        // Handle object values
+        if (is_object($value)) {
+            return 'true';
+        }
+        
+        return 'null';
+    }
+    
+    /**
+     * Helper method to process variables in content
+     */
+    private function processVariablesInContent($content) {
+        // Process variables with bracket notation first
+        $content = preg_replace_callback(
+            '/\{\{\s*([a-zA-Z0-9_]+(?:\[[^\]]+\])+(?:\.[a-zA-Z0-9_]+)*)\s*\}\}/',
+            array($this, 'replaceVariable'),
+            $content
+        );
+        
+        // Process regular variables (must come after bracket notation)
+        $content = preg_replace_callback(
+            '/\{\{\s*([a-zA-Z0-9._]+)\s*\}\}/',
+            array($this, 'replaceVariable'),
+            $content
+        );
+        
+        return $content;
+    }
+    
+    /**
+     * Replace a variable with its value
+     *
+     * @param array $matches Regex matches from preg_replace_callback
+     * @return string The value of the variable
+     */
+    private function replaceVariable($matches) {
+        $path = $matches[1];
+
+        // Special case for .length
+        if (preg_match('/^([a-zA-Z0-9_\.]+)\.length$/', $path, $lenMatch)) {
+            $arr = $this->getNestedValue($lenMatch[1]);
+            if (is_array($arr)) {
+                return count($arr);
+            } else {
+                if ($this->debugMode) {
+                    return "<!-- Debug: Variable '{$path}' not found -->";
+                }
+                return '';
+            }
+        }
+        
+        try {
+            // Handle direct variable access first (no dots)
+            if (strpos($path, '.') === false && array_key_exists($path, $this->variables)) {
+                $value = $this->variables[$path];
+                
+                // Handle array values by converting to JSON
+                if (is_array($value)) {
+                    return json_encode($value);
+                }
+                
+                return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+            }
+            
+            // Handle nested properties
             $value = $this->getNestedValue($path);
             
             // Handle null values
@@ -486,6 +705,11 @@ class Template {
                     return "<!-- Debug: Variable '{$path}' not found -->";
                 }
                 return '';
+            }
+            
+            // Handle array values
+            if (is_array($value)) {
+                return json_encode($value);
             }
             
             return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
@@ -498,315 +722,434 @@ class Template {
         }
     }
     
-    private function processCondition($matches) {
-        $condition = trim($matches[1]);
-        $content = $matches[2];
-        
-        try {
-            // Parse blocks
-            $blocks = $this->parseBlocks($content);
-            $result = '';
-            
-            // Check main if condition
-            if ($this->evaluateCondition($condition)) {
-                $result = $blocks['if'];
-            } else {
-                // Check elseif conditions
-                $elseifMatched = false;
-                foreach ($blocks['elseif'] as $elseif) {
-                    if ($this->evaluateCondition($elseif['condition'])) {
-                        $result = $elseif['content'];
-                        $elseifMatched = true;
-                        break;
-                    }
-                }
-                
-                // If no elseif matched and there's an else block
-                if (!$elseifMatched && isset($blocks['else'])) {
-                    $result = $blocks['else'];
-                }
-            }
-            
-            // Process nested conditions in the result
-            return trim($this->processTemplate($result));
-        } catch (Exception $e) {
-            return '<!-- Error processing condition: ' . htmlspecialchars($e->getMessage()) . ' -->';
-        }
-    }
-    
-    private function parseBlocks($content) {
-        $blocks = array(
-            'if' => '',
-            'elseif' => array(),
-            'else' => ''
-        );
-        
-        // Split content into if/elseif/else blocks
-        $pattern = '/\{%\s*(elseif|else)\s*([^%]*?)\s*%\}/';
-        $parts = preg_split($pattern, $content, -1, PREG_SPLIT_DELIM_CAPTURE);
-        
-        // First part is always the if content
-        $blocks['if'] = trim($parts[0]);
-        
-        // Process remaining parts
-        for ($i = 1; $i < count($parts); $i += 3) {
-            if (!isset($parts[$i])) break;
-            
-            if ($parts[$i] === 'elseif' && isset($parts[$i + 1], $parts[$i + 2])) {
-                $blocks['elseif'][] = array(
-                    'condition' => trim($parts[$i + 1]),
-                    'content' => trim($parts[$i + 2])
-                );
-            } elseif ($parts[$i] === 'else' && isset($parts[$i + 2])) {
-                $blocks['else'] = trim($parts[$i + 2]);
-                break; // Stop after else block
-            }
-        }
-        
-        return $blocks;
-    }
-    
-    private function evaluateSingleCondition($condition) {
-        // Handle negation first
-        $isNegated = false;
-        if (strpos($condition, '!') === 0) {
-            $isNegated = true;
-            $condition = ltrim(substr($condition, 1));
-        }
-        
-        // Check for comparison operators
-        if (preg_match('/(.+?)\s*(===|==|>|<|>=|<=)\s*(.+)/', $condition, $matches)) {
-            $left = trim($matches[1]);
-            $operator = $matches[2];
-            $right = trim($matches[3], '"\'');
-            
-            $leftValue = $this->getNestedValue($left);
-            
-            if (is_numeric($right) && is_numeric($leftValue)) {
-                $leftValue = (float)$leftValue;
-                $rightValue = (float)$right;
-            } elseif ($right === 'true') {
-                $rightValue = true;
-            } elseif ($right === 'false') {
-                $rightValue = false;
-            } else {
-                $rightValue = $right;
-            }
-            
-            $result = false;
-            switch ($operator) {
-                case '===': $result = $leftValue === $rightValue; break;
-                case '==': $result = $leftValue == $rightValue; break;
-                case '>': $result = is_numeric($leftValue) && is_numeric($rightValue) ? (float)$leftValue > (float)$rightValue : false; break;
-                case '<': $result = is_numeric($leftValue) && is_numeric($rightValue) ? (float)$leftValue < (float)$rightValue : false; break;
-                case '>=': $result = is_numeric($leftValue) && is_numeric($rightValue) ? (float)$leftValue >= (float)$rightValue : false; break;
-                case '<=': $result = is_numeric($leftValue) && is_numeric($rightValue) ? (float)$leftValue <= (float)$rightValue : false; break;
-            }
-            return $isNegated ? !$result : $result;
-        }
-        
-        // Simple boolean check
-        $value = $this->getNestedValue(trim($condition));
-        $result = !empty($value);
-        return $isNegated ? !$result : $result;
-    }
-    
-    private function evaluateCondition($condition) {
-        // Split by OR operator first
-        $orParts = explode('||', $condition);
-        
-        foreach ($orParts as $orPart) {
-            // Split by AND operator
-            $andParts = explode('&&', trim($orPart));
-            
-            // Check all AND conditions
-            $andResult = true;
-            foreach ($andParts as $part) {
-                if (!$this->evaluateSingleCondition(trim($part))) {
-                    $andResult = false;
-                    break;
-                }
-            }
-            
-            // If any OR condition is true, return true
-            if ($andResult) {
-                return true;
-            }
-        }
-        
-        return false;
-    }
-    
-    private function processFunction($matches) {
-        $functionName = trim($matches[1]);
-        $argument = trim($matches[2]);
-        
-        try {
-            // Handle function arguments that might contain nested variables
-            if (preg_match('/^[\'"](.+?)[\'"]$/', $argument, $stringMatch)) {
-                // String literal argument
-                $argValue = $stringMatch[1];
-            } elseif (preg_match('/^[\'"](.+?)[\'"],\s*(.+)$/', $argument, $multiArgMatch)) {
-                // Multiple arguments (string + variable)
-                $firstArg = $multiArgMatch[1];
-                $secondArg = $this->getNestedValue(trim($multiArgMatch[2]));
-                return call_user_func($functionName, $firstArg, $secondArg);
-            } else {
-                // Variable argument
-                $argValue = $this->getNestedValue($argument);
-            }
-            
-            // Check if function exists
-            if (function_exists($functionName)) {
-                return call_user_func($functionName, $argValue);
-            }
-            
-            // If function doesn't exist, return a comment
-            return '<!-- Function not found: ' . htmlspecialchars($functionName) . ' -->';
-        } catch (Exception $e) {
-            return '<!-- Error processing function ' . htmlspecialchars($functionName) . ': ' . 
-                   htmlspecialchars($e->getMessage()) . ' -->';
-        }
-    }
-    
+    /**
+     * Get a nested value from the variables array using dot and bracket notation
+     *
+     * @param string $path The path to the value (e.g. "user.details.balance" or "user[details][balance]")
+     * @return mixed The value at the path or null if not found
+     */
     private function getNestedValue($path) {
-        try {
-            // Normalize path by handling mixed notation (brackets and dots)
-            $path = preg_replace_callback(
-                '/\[([^\[\]]+)\]/', 
-                function($match) {
-                    return '.' . trim($match[1], '"\'');
-                }, 
-                $path
-            );
-            
-            $parts = explode('.', $path);
-            if (empty($parts)) {
-                return null;
-            }
-            
-            // Always start from the current scope (which may be a loop context)
-            $current = $this->variables;
-            
-            foreach ($parts as $part) {
-                if (empty($part)) continue;
-                
-                // Special handling for .length
-                if ($part === 'length') {
-                    if (is_array($current) || $current instanceof Countable) {
-                        return count($current);
-                    } elseif (is_string($current)) {
-                        return strlen($current);
-                    } else {
-                        return null;
-                    }
-                }
-            
+        // Handle bracket notation
+        if (strpos($path, '[') !== false) {
+            return $this->getBracketValue($path);
+        }
+
+        // Handle dot notation
+        $parts = explode('.', $path);
+
+        // Try to resolve from current scope (including loop variables)
+        if (isset($this->variables[$parts[0]])) {
+            $current = $this->variables[$parts[0]];
+            for ($i = 1; $i < count($parts); $i++) {
+                $part = $parts[$i];
                 if (is_array($current) && array_key_exists($part, $current)) {
                     $current = $current[$part];
                 } elseif (is_object($current) && property_exists($current, $part)) {
                     $current = $current->$part;
                 } else {
-                    // Property not found
-                    if ($this->debugMode) {
-                        $type = is_array($current) ? 'array' : (is_object($current) ? 'object of class ' . get_class($current) : gettype($current));
-                        error_log("Template Debug: Property '{$part}' not found in {$type}");
-                        if (is_array($current)) {
-                            error_log("Template Debug: Available keys: " . implode(', ', array_keys($current)));
-                        }
-                    }
                     return null;
                 }
             }
-            
             return $current;
-        } catch (Exception $e) {
-            if ($this->errorMode === 'exception') {
-                throw $e;
-            }
-            return null;
         }
-    }
-    
-    private function checkMemoryUsage() {
-        $memoryUsage = memory_get_usage(true);
-        $memoryLimit = $this->maxMemory;
-        
-        if ($memoryUsage > $memoryLimit * 0.9) {
-            // If we're using more than 90% of our limit, throw an exception
-            throw new Exception("Memory usage too high: {$memoryUsage} bytes used, limit is {$memoryLimit} bytes");
-        }
-    }
-    
-    /**
-     * Set the maximum memory usage allowed for template processing
-     * 
-     * @param int $bytes Maximum memory in bytes
-     * @return Template
-     */
-    public function setMaxMemory($bytes) {
-        $this->maxMemory = (int)$bytes;
-        return $this;
-    }
-    
-    /**
-     * Set the maximum number of iterations for loops and conditions
-     * 
-     * @param int $iterations Maximum iterations
-     * @return Template
-     */
-    public function setMaxIterations($iterations) {
-        $this->maxIterations = (int)$iterations;
-        return $this;
-    }
-    
-    /**
-     * Set the error handling mode
-     * 
-     * @param string $mode 'comment', 'exception', or 'silent'
-     * @return Template
-     */
-    public function setErrorMode($mode) {
-        if (in_array($mode, ['comment', 'exception', 'silent'])) {
-            $this->errorMode = $mode;
-        }
-        return $this;
-    }
 
-     /**
-      * 
-      * @param string $template The template string
-      * @return string The processed template
-      */
-     private function processSimpleCondition($matches) {
-        $condition = trim($matches[1]);
-        $ifContent = isset($matches[2]) ? $matches[2] : '';
-        $elseContent = isset($matches[3]) ? $matches[3] : '';
-    
-        try {
-            if ($this->evaluateCondition($condition)) {
-                return $this->processTemplate($ifContent);
+        // Fallback: try to resolve from global variables (for top-level access)
+        $current = $this->variables;
+        foreach ($parts as $part) {
+            if (empty($part)) continue;
+            if (is_array($current) && array_key_exists($part, $current)) {
+                $current = $current[$part];
+            } elseif (is_object($current) && property_exists($current, $part)) {
+                $current = $current->$part;
             } else {
-                return $this->processTemplate($elseContent);
+                return null;
             }
+        }
+        return $current;
+    }
+    
+    /**
+     * Process include statements in templates
+     *
+     * @param array $matches Regex matches from preg_replace_callback
+     * @return string The processed include content
+     */
+    private function processFunction($matches) {
+        $functionName = 'inc';
+        $arguments = $matches[1];
+        
+        // Currently only supporting the inc() function
+        if ($functionName === 'inc') {
+            // Extract the template name from the arguments
+            if (preg_match('/[\'"]([^\'"]+)[\'"]/', $arguments, $argMatches)) {
+                return $this->processInclude([0, $argMatches[1]]);
+            }
+        }
+        
+        if ($this->debugMode) {
+            return "<!-- Unknown function: {$functionName}() -->";
+        }
+        return '';
+    }
+    
+    /**
+     * Process include statements in templates
+     *
+     * @param array $matches Regex matches from preg_replace_callback
+     * @return string The processed include content
+     */
+    private function processInclude($matches) {
+        $includeName = $matches[1];
+        $includePath = $this->templateDir . $includeName . '.' . $this->templateExt;
+        
+        if (!file_exists($includePath)) {
+            if ($this->debugMode) {
+                return "<!-- Include file not found: {$includePath} -->";
+            }
+            return '';
+        }
+        
+        try {
+            $includeContent = file_get_contents($includePath);
+            
+            // Process the included template with the current variables
+            return $this->processTemplate($includeContent);
         } catch (Exception $e) {
             if ($this->errorMode === 'exception') {
                 throw $e;
             } elseif ($this->errorMode === 'comment') {
-                return '<!-- Error processing condition: ' . htmlspecialchars($e->getMessage()) . ' -->';
+                return "<!-- Error processing include '{$includeName}': " . 
+                       htmlspecialchars($e->getMessage()) . " -->";
+            }
+            return '';
+        }
+    }
+    
+    /**
+     * Clean up the template by removing any remaining template tags and extra whitespace
+     *
+     * @param string $template The template to clean up
+     * @return string The cleaned template
+     */
+    private function cleanupTemplate($template) {
+        // Remove any remaining template tags (for safety)
+        $template = preg_replace('/\{%.*?%\}/', '', $template);
+        
+        // Optionally, you could also remove extra whitespace here
+        // $template = preg_replace('/\s+/', ' ', $template);
+        
+        return $template;
+    }
+    
+    /**
+     * Check if memory usage is approaching the limit and throw an exception if necessary
+     *
+     * @throws Exception if memory usage exceeds the limit
+     */
+    private function checkMemoryUsage() {
+        $memoryUsage = memory_get_usage(true);
+        $memoryLimit = $this->maxMemory;
+        
+        // If memory usage is over 90% of the limit, throw an exception
+        if ($memoryUsage > ($memoryLimit * 0.9)) {
+            throw new Exception("Memory usage limit approaching: {$memoryUsage} bytes used of {$memoryLimit} bytes allowed");
+        }
+    }
+    
+    /**
+     * Set debug mode
+     *
+     * @param bool $debugMode
+     * @return Template For method chaining
+     */
+    public function setDebugMode($debugMode) {
+        $this->debugMode = $debugMode;
+        return $this;
+    }
+    
+    /**
+     * Set error mode
+     *
+     * @param string $errorMode 'comment', 'exception', or 'silent'
+     * @return Template For method chaining
+     */
+    public function setErrorMode($errorMode) {
+        if (in_array($errorMode, ['comment', 'exception', 'silent'])) {
+            $this->errorMode = $errorMode;
+        }
+        return $this;
+    }
+    
+    /**
+     * Set maximum memory usage
+     *
+     * @param int $maxMemory Maximum memory usage in bytes
+     * @return Template For method chaining
+     */
+    public function setMaxMemory($maxMemory) {
+        $this->maxMemory = (int)$maxMemory;
+        return $this;
+    }
+    
+    /**
+     * Set maximum iterations for recursive template processing
+     *
+     * @param int $maxIterations Maximum iterations
+     * @return Template For method chaining
+     */
+    public function setMaxIterations($maxIterations) {
+        $this->maxIterations = (int)$maxIterations;
+        return $this;
+    }
+
+    /**
+     * Process function calls with parameters
+     *
+     * @param array $matches Regex matches from preg_replace_callback
+     * @return string The result of the function call
+     */
+    private function processFunctionCall($matches) {
+        $functionName = $matches[1];
+        $argsString = $matches[2];
+        
+        // List of allowed functions for security
+        $allowedFunctions = [
+            'htmlspecialchars', 'htmlentities', 'strip_tags',
+            'strtoupper', 'strtolower', 'ucfirst', 'lcfirst', 'ucwords',
+            'number_format', 'round', 'floor', 'ceil', 'abs',
+            'count', 'sizeof', 'implode', 'explode', 'trim', 'ltrim', 'rtrim',
+            'date', 'time', 'strtotime', 'nl2br', 'json_encode', 'md5', 'sha1',
+            'isset', 'empty', 'is_array', 'is_string', 'is_numeric', 'is_object'
+        ];
+        
+        // Check if function is allowed
+        if (!in_array($functionName, $allowedFunctions)) {
+            if ($this->debugMode) {
+                return "<!-- Function '{$functionName}' is not allowed -->";
+            }
+            return '';
+        }
+        
+        // Parse arguments
+        $args = $this->parseFunctionArguments($argsString);
+        
+        // Call the function
+        try {
+            $result = call_user_func_array($functionName, $args);
+            
+            // Convert result to string
+            if (is_array($result) || is_object($result)) {
+                return json_encode($result);
+            } elseif (is_bool($result)) {
+                return $result ? 'true' : 'false';
+            } elseif (is_null($result)) {
+                return '';
+            } else {
+                return (string)$result;
+            }
+        } catch (Exception $e) {
+            if ($this->debugMode) {
+                return "<!-- Error calling function '{$functionName}': " . 
+                    htmlspecialchars($e->getMessage()) . " -->";
             }
             return '';
         }
     }
 
     /**
+     * Parse function arguments
      *
-     * @param bool $debugMode
-     * @return Template
+     * @param string $argsString The arguments string
+     * @return array The parsed arguments
      */
-    public function setDebugMode($debugMode) {
-        $this->debugMode = $debugMode;
-        return $this;
+    private function parseFunctionArguments($argsString) {
+        $args = [];
+        
+        // If no arguments, return empty array
+        if (empty(trim($argsString))) {
+            return $args;
+        }
+        
+        // Split by commas, but respect quotes
+        $inQuote = false;
+        $quoteChar = '';
+        $currentArg = '';
+        $escaped = false;
+        
+        for ($i = 0; $i < strlen($argsString); $i++) {
+            $char = $argsString[$i];
+            
+            // Handle escape character
+            if ($char === '\\' && !$escaped) {
+                $escaped = true;
+                continue;
+            }
+            
+            // Handle quotes
+            if (($char === '"' || $char === "'") && !$escaped) {
+                if (!$inQuote) {
+                    $inQuote = true;
+                    $quoteChar = $char;
+                } elseif ($char === $quoteChar) {
+                    $inQuote = false;
+                } else {
+                    $currentArg .= $char;
+                }
+            }
+            // Handle comma (argument separator)
+            elseif ($char === ',' && !$inQuote) {
+                $args[] = $this->processArgumentValue(trim($currentArg));
+                $currentArg = '';
+            }
+            // All other characters
+            else {
+                $currentArg .= $char;
+            }
+            
+            $escaped = false;
+        }
+        
+        // Add the last argument
+        if (!empty($currentArg) || count($args) > 0) {
+            $args[] = $this->processArgumentValue(trim($currentArg));
+        }
+        
+        return $args;
     }
+
+    /**
+     * Process an argument value
+     *
+     * @param string $arg The argument string
+     * @return mixed The processed argument value
+     */
+    private function processArgumentValue($arg) {
+        // Check if it's a quoted string
+        if ((substr($arg, 0, 1) === '"' && substr($arg, -1) === '"') || 
+            (substr($arg, 0, 1) === "'" && substr($arg, -1) === "'")) {
+            return substr($arg, 1, -1);
+        }
+        
+        // Check if it's a number
+        if (is_numeric($arg)) {
+            return $arg + 0; // Convert to int or float
+        }
+        
+        // Check if it's a boolean
+        if ($arg === 'true') return true;
+        if ($arg === 'false') return false;
+        if ($arg === 'null') return null;
+        
+        // Check for nested function calls like strtotime(user.details.joined)
+        if (preg_match('/^([a-zA-Z0-9_]+)\s*\(\s*(.*?)\s*\)$/', $arg, $matches)) {
+            $nestedFunction = $matches[1];
+            $nestedArgs = $this->parseFunctionArguments($matches[2]);
+            
+            // List of allowed functions for security
+            $allowedFunctions = [
+                'htmlspecialchars', 'htmlentities', 'strip_tags',
+                'strtoupper', 'strtolower', 'ucfirst', 'lcfirst', 'ucwords',
+                'number_format', 'round', 'floor', 'ceil', 'abs',
+                'count', 'sizeof', 'implode', 'explode', 'trim', 'ltrim', 'rtrim',
+                'date', 'time', 'strtotime', 'nl2br', 'json_encode', 'md5', 'sha1',
+                'isset', 'empty', 'is_array', 'is_string', 'is_numeric', 'is_object'
+            ];
+            
+            // Check if function is allowed
+            if (in_array($nestedFunction, $allowedFunctions)) {
+                try {
+                    return call_user_func_array($nestedFunction, $nestedArgs);
+                } catch (Exception $e) {
+                    if ($this->debugMode) {
+                        error_log("Template Debug: Error in nested function '{$nestedFunction}': " . $e->getMessage());
+                    }
+                    return null;
+                }
+            }
+        }
+        
+        // Check if it's a variable path
+        if (preg_match('/^[a-zA-Z0-9._\[\]]+$/', $arg)) {
+            return $this->getNestedValue($arg);
+        }
+        
+        // Default: return as is
+        return $arg;
+    }
+
+        /**
+     * Get a nested value from the variables array using bracket notation
+     *
+     * @param string $path The path to the value (e.g. "user[details][balance]")
+     * @return mixed The value at the path or null if not found
+     */
+    private function getBracketValue($path) {
+        // Parse the path into parts
+        $matches = [];
+        preg_match_all('/([a-zA-Z0-9_]+)(?:\[([^\]]+)\])?/', $path, $matches, PREG_SET_ORDER);
+        
+        if (empty($matches)) {
+            return null;
+        }
+        
+        // Start with the root variable
+        $rootVar = $matches[0][1];
+        if (!isset($this->variables[$rootVar])) {
+            return null;
+        }
+        
+        $current = $this->variables[$rootVar];
+        
+        // Process the first bracket if it exists
+        if (isset($matches[0][2])) {
+            $key = $matches[0][2];
+            // Remove quotes if present
+            if ((substr($key, 0, 1) === '"' && substr($key, -1) === '"') || 
+                (substr($key, 0, 1) === "'" && substr($key, -1) === "'")) {
+                $key = substr($key, 1, -1);
+            }
+            
+            if (is_array($current) && isset($current[$key])) {
+                $current = $current[$key];
+            } else {
+                return null;
+            }
+        }
+        
+        // Process remaining parts
+        for ($i = 1; $i < count($matches); $i++) {
+            $part = $matches[$i];
+            
+            // Handle dot notation after brackets
+            if (isset($part[1])) {
+                $key = $part[1];
+                
+                if (is_array($current) && isset($current[$key])) {
+                    $current = $current[$key];
+                } else {
+                    return null;
+                }
+            }
+            
+            // Handle bracket notation
+            if (isset($part[2])) {
+                $key = $part[2];
+                // Remove quotes if present
+                if ((substr($key, 0, 1) === '"' && substr($key, -1) === '"') || 
+                    (substr($key, 0, 1) === "'" && substr($key, -1) === "'")) {
+                    $key = substr($key, 1, -1);
+                }
+                
+                if (is_array($current) && isset($current[$key])) {
+                    $current = $current[$key];
+                } else {
+                    return null;
+                }
+            }
+        }
+        
+        return $current;
+    }
+
 }
 ?>
