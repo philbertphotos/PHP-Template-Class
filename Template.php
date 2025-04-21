@@ -174,14 +174,14 @@ class Template {
     private function processForLoops($template) {
         // Process key-value for loops first
         $template = preg_replace_callback(
-            '/\{%\s*for\s+([a-zA-Z0-9_]+)\s*,\s*([a-zA-Z0-9_]+)\s+in\s+([a-zA-Z0-9._\[\]]+)\s*%\}(.*?)\{%\s*endfor\s*%\}/s',
+            '/\{%\s*for\s+([a-zA-Z0-9_]+)\s*,\s*([a-zA-Z0-9_]+)\s+in\s+([a-zA-Z0-9._\[\]\'"]+)\s*%\}([\s\S]*?)\{%\s*endfor\s*%\}/s',
             array($this, 'processKeyValueForLoop'),
             $template
         );
         
         // Then process regular for loops
         $template = preg_replace_callback(
-            '/\{%\s*for\s+([a-zA-Z0-9_]+)\s+in\s+([a-zA-Z0-9._\[\]]+)\s*%\}(.*?)\{%\s*endfor\s*%\}/s',
+            '/\{%\s*for\s+([a-zA-Z0-9_]+)\s+in\s+([a-zA-Z0-9._\[\]\'"]+)\s*%\}([\s\S]*?)\{%\s*endfor\s*%\}/s',
             array($this, 'processForLoop'),
             $template
         );
@@ -189,7 +189,7 @@ class Template {
         return $template;
     }
     
-    /**
+        /**
      * Process a regular for loop
      *
      * @param array $matches Regex matches from preg_replace_callback
@@ -201,29 +201,7 @@ class Template {
         $content = $matches[3];
         
         // Get the array to iterate over
-        $array = null;
-        
-        // Special handling for nested loops
-        if (strpos($arrayPath, '.') !== false) {
-            $parts = explode('.', $arrayPath);
-            $parentVar = $parts[0];
-            $childKey = $parts[1];
-            
-            // Check if we're inside a loop context
-            if (isset($this->variables[$parentVar])) {
-                $parent = $this->variables[$parentVar];
-                
-                // Direct access to the nested array if parent is an array with the child key
-                if (is_array($parent) && isset($parent[$childKey])) {
-                    $array = $parent[$childKey];
-                }
-            }
-        }
-        
-        // If we didn't find a nested array, try the standard approach
-        if ($array === null) {
-            $array = $this->getNestedValue($arrayPath);
-        }
+        $array = $this->getNestedValue($arrayPath);
         
         // If not an array or empty, return appropriate message
         if (!is_array($array)) {
@@ -233,7 +211,41 @@ class Template {
             return '';
         }
         
-        return $this->processLoop($array, $itemName, $arrayPath, $content);
+        $result = '';
+        $originalVars = $this->variables;
+        $arrayLength = count($array);
+        $index = 0;
+        
+        // Store original loop variable if it exists (for nested loops)
+        $originalLoop = isset($this->variables['loop']) ? $this->variables['loop'] : null;
+        
+        foreach ($array as $key => $item) {
+            $this->checkMemoryUsage();
+            
+            // Set the item variable in the current scope
+            $this->variables[$itemName] = $item;
+            
+            // Add loop metadata
+            $this->variables['loop'] = [
+                'index' => $index + 1,
+                'index0' => $index,
+                'first' => ($index === 0),
+                'last' => ($index === $arrayLength - 1),
+                'length' => $arrayLength,
+                'parent' => $originalLoop
+            ];
+            
+            // Process the content for this iteration
+            $processedContent = $this->processTemplate($content);
+            $result .= $processedContent;
+            
+            $index++;
+        }
+        
+        // Restore original variables scope
+        $this->variables = $originalVars;
+        
+        return $result;
     }
 
     /**
@@ -688,9 +700,12 @@ class Template {
             if (strpos($path, '.') === false && array_key_exists($path, $this->variables)) {
                 $value = $this->variables[$path];
                 
-                // Handle array values by converting to JSON
+                // Prevent direct array output
                 if (is_array($value)) {
-                    return json_encode($value);
+                    if ($this->debugMode) {
+                        return "<!-- Debug: Cannot directly output array '{$path}'. Use a for loop instead. -->";
+                    }
+                    return '';
                 }
                 
                 return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
@@ -707,9 +722,12 @@ class Template {
                 return '';
             }
             
-            // Handle array values
+            // Prevent direct array output
             if (is_array($value)) {
-                return json_encode($value);
+                if ($this->debugMode) {
+                    return "<!-- Debug: Cannot directly output array '{$path}'. Use a for loop instead. -->";
+                }
+                return '';
             }
             
             return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
@@ -722,50 +740,92 @@ class Template {
         }
     }
     
-    /**
+        /**
      * Get a nested value from the variables array using dot and bracket notation
      *
      * @param string $path The path to the value (e.g. "user.details.balance" or "user[details][balance]")
      * @return mixed The value at the path or null if not found
      */
     private function getNestedValue($path) {
-        // Handle bracket notation
-        if (strpos($path, '[') !== false) {
-            return $this->getBracketValue($path);
-        }
-
-        // Handle dot notation
-        $parts = explode('.', $path);
-
-        // Try to resolve from current scope (including loop variables)
-        if (isset($this->variables[$parts[0]])) {
-            $current = $this->variables[$parts[0]];
-            for ($i = 1; $i < count($parts); $i++) {
-                $part = $parts[$i];
+        try {
+            // Handle empty path
+            if (empty($path)) {
+                return null;
+            }
+            
+            // Normalize path by handling mixed notation (brackets and dots)
+            $path = preg_replace_callback(
+                '/\[([^\[\]]+)\]/', 
+                function($match) {
+                    return '.' . $match[1];
+                }, 
+                $path
+            );
+            
+            // Split the path into parts
+            $parts = explode('.', $path);
+            $firstPart = array_shift($parts);
+            
+            // Check if the first part exists in current variables scope
+            if (!array_key_exists($firstPart, $this->variables)) {
+                return null;
+            }
+            
+            // Start with the first part from current variables scope
+            $current = $this->variables[$firstPart];
+            
+            // Traverse the path
+            foreach ($parts as $part) {
+                if (empty($part)) continue;
+                
+                // Handle array access
                 if (is_array($current) && array_key_exists($part, $current)) {
                     $current = $current[$part];
-                } elseif (is_object($current) && property_exists($current, $part)) {
+                } 
+                // Handle object access
+                elseif (is_object($current) && property_exists($current, $part)) {
                     $current = $current->$part;
-                } else {
+                } 
+                // Handle special case for loop variables
+                elseif ($firstPart === 'loop' && $part === 'parent' && isset($this->variables['loop']['parent'])) {
+                    $current = $this->variables['loop']['parent'];
+                }
+                // Handle special case for current loop item - IMPROVED NESTED ARRAY ACCESS
+                elseif (is_array($current)) {
+                    // Try numeric index for arrays
+                    if (is_numeric($part) && isset($current[(int)$part])) {
+                        $current = $current[(int)$part];
+                    } else {
+                        // For nested loops, check if we're in a loop context
+                        if (isset($this->variables['loop']) && isset($current[$part])) {
+                            $current = $current[$part];
+                        } else {
+                            // Debug information
+                            if ($this->debugMode) {
+                                $type = is_object($current) ? get_class($current) : gettype($current);
+                                error_log("Template Debug: Property '{$part}' not found in {$type} for path '{$path}'");
+                            }
+                            return null;
+                        }
+                    }
+                }
+                else {
+                    // Debug information
+                    if ($this->debugMode) {
+                        $type = is_object($current) ? get_class($current) : gettype($current);
+                        error_log("Template Debug: Property '{$part}' not found in {$type} for path '{$path}'");
+                    }
                     return null;
                 }
             }
+            
             return $current;
-        }
-
-        // Fallback: try to resolve from global variables (for top-level access)
-        $current = $this->variables;
-        foreach ($parts as $part) {
-            if (empty($part)) continue;
-            if (is_array($current) && array_key_exists($part, $current)) {
-                $current = $current[$part];
-            } elseif (is_object($current) && property_exists($current, $part)) {
-                $current = $current->$part;
-            } else {
-                return null;
+        } catch (Exception $e) {
+            if ($this->debugMode) {
+                error_log("Template Debug: Error getting nested value for '{$path}': " . $e->getMessage());
             }
+            return null;
         }
-        return $current;
     }
     
     /**
