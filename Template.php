@@ -8,7 +8,7 @@
  * @copyright Copyright (c) 2024-?
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      https://github.com/oxcakmak/PHP-Template-Class
- * @version   1.1.5
+ * @version   1.1.6
  */
 class Template {
     /** @var array Variables available to templates */
@@ -168,8 +168,8 @@ class Template {
     /**
      * Process for loops in templates
      *
-     * @param string $template The template content
-     * @return string The processed template
+     * @param string $template Template content to process
+     * @return string Processed template content
      */
     private function processForLoops($template) {
         // Process key-value for loops first
@@ -189,7 +189,7 @@ class Template {
         return $template;
     }
     
-    /**
+        /**
      * Process a regular for loop
      *
      * @param array $matches Regex matches from preg_replace_callback
@@ -212,7 +212,6 @@ class Template {
         }
         
         $result = '';
-        // Store original variables to restore later
         $originalVars = $this->variables;
         $arrayLength = count($array);
         $index = 0;
@@ -223,11 +222,10 @@ class Template {
         foreach ($array as $key => $item) {
             $this->checkMemoryUsage();
             
-            // Create a NEW COPY of the variables for this iteration
-            // This is crucial for nested loops to work correctly
+            // Create a new scope for this iteration
             $iterationVars = $originalVars;
             
-            // Set the item variable in the current scope
+            // Set the item variable in the current iteration's scope
             $iterationVars[$itemName] = $item;
             
             // Add loop metadata
@@ -240,27 +238,17 @@ class Template {
                 'parent' => $originalLoop
             ];
             
-            // Set the variables for this iteration
+            // Set the current scope for variable replacement
             $this->variables = $iterationVars;
             
             // Process the content for this iteration
-            $iterationContent = $content;
-            
-            // Process nested loops first
-            $iterationContent = $this->processForLoops($iterationContent);
-            
-            // Process if conditions after nested loops
-            $iterationContent = $this->processIfConditions($iterationContent);
-            
-            // Process variables last
-            $iterationContent = $this->processVariablesInContent($iterationContent);
-            
-            $result .= $iterationContent;
+            $processedContent = $this->processTemplate($content);
+            $result .= $processedContent;
             
             $index++;
         }
         
-        // Restore original variables
+        // Restore original variables scope
         $this->variables = $originalVars;
         
         return $result;
@@ -313,10 +301,49 @@ class Template {
             return '';
         }
         
-        return $this->processKeyValueLoop($array, $keyName, $valueName, $arrayPath, $content);
+        $result = '';
+        $originalVars = $this->variables;
+        $arrayLength = count($array);
+        $index = 0;
+        
+        // Store original loop variable if it exists (for nested loops)
+        $originalLoop = isset($this->variables['loop']) ? $this->variables['loop'] : null;
+        
+        foreach ($array as $key => $value) {
+            $this->checkMemoryUsage();
+            
+            // Create new scope for this iteration
+            $iterationVars = $originalVars;
+            $iterationVars[$keyName] = $key;
+            $iterationVars[$valueName] = $value;
+            
+            // Add loop metadata
+            $iterationVars['loop'] = [
+                'index' => $index + 1,
+                'index0' => $index,
+                'first' => ($index === 0),
+                'last' => ($index === $arrayLength - 1),
+                'length' => $arrayLength,
+                'parent' => $originalLoop
+            ];
+            
+            // Set the current scope for variable replacement
+            $this->variables = $iterationVars;
+            
+            // Process the content for this iteration
+            $processedContent = $this->processTemplate($content);
+            $result .= $processedContent;
+            
+            $index++;
+        }
+        
+        // Restore original variables scope
+        $this->variables = $originalVars;
+        
+        return $result;
     }
     
-    /**
+        /**
      * Process a loop with an array
      *
      * @param array $array The array to iterate over
@@ -683,7 +710,7 @@ class Template {
         
         // Process regular variables (must come after bracket notation)
         $content = preg_replace_callback(
-            '/\{\{\s*([a-zA-Z0-9._\[\]\'\"]+)\s*\}\}/',
+            '/\{\{\s*([a-zA-Z0-9._]+)\s*\}\}/',
             array($this, 'replaceVariable'),
             $content
         );
@@ -707,7 +734,7 @@ class Template {
                 return count($arr);
             } else {
                 if ($this->debugMode) {
-                    return "<!-- Debug: Variable '{$path}' not found or not an array -->";
+                    return "<!-- Debug: Variable '{$path}' not found -->";
                 }
                 return '';
             }
@@ -715,26 +742,18 @@ class Template {
         
         try {
             // Handle direct variable access first (no dots)
-            if (strpos($path, '.') === false && strpos($path, '[') === false) {
-                if (array_key_exists($path, $this->variables)) {
-                    $value = $this->variables[$path];
-                    
-                    // Prevent direct array output
-                    if (is_array($value)) {
-                        if ($this->debugMode) {
-                            return "<!-- Debug: Cannot directly output array '{$path}'. Use a for loop instead. -->";
-                        }
-                        return '';
-                    }
-                    
-                    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
-                } else {
-                    // Debug output for troubleshooting
+            if (strpos($path, '.') === false && array_key_exists($path, $this->variables)) {
+                $value = $this->variables[$path];
+                
+                // Prevent direct array output
+                if (is_array($value)) {
                     if ($this->debugMode) {
-                        return "<!-- Debug: Variable '{$path}' not found -->";
+                        return "<!-- Debug: Cannot directly output array '{$path}'. Use a for loop instead. -->";
                     }
                     return '';
                 }
+                
+                return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
             }
             
             // Handle nested properties
@@ -766,7 +785,7 @@ class Template {
         }
     }
     
-    /**
+        /**
      * Get a nested value from the variables array using dot and bracket notation
      *
      * @param string $path The path to the value (e.g. "user.details.balance" or "user[details][balance]")
@@ -779,16 +798,11 @@ class Template {
                 return null;
             }
             
-            // Handle direct variable access (no dots or brackets)
-            if (strpos($path, '.') === false && strpos($path, '[') === false) {
-                return array_key_exists($path, $this->variables) ? $this->variables[$path] : null;
-            }
-            
             // Normalize path by handling mixed notation (brackets and dots)
             $path = preg_replace_callback(
                 '/\[([^\[\]]+)\]/', 
                 function($match) {
-                    return '.' . trim($match[1], '\'"');
+                    return '.' . $match[1];
                 }, 
                 $path
             );
@@ -817,20 +831,11 @@ class Template {
                 elseif (is_object($current) && property_exists($current, $part)) {
                     $current = $current->$part;
                 } 
-                // Handle numeric indices for arrays
+                // Handle numeric array access
                 elseif (is_array($current) && is_numeric($part) && isset($current[(int)$part])) {
                     $current = $current[(int)$part];
-                }
-                // Handle special case for loop variables
-                elseif ($firstPart === 'loop' && $part === 'parent' && isset($this->variables['loop']['parent'])) {
-                    $current = $this->variables['loop']['parent'];
-                }
+                } 
                 else {
-                    // Debug output for troubleshooting
-                    if ($this->debugMode) {
-                        $type = is_object($current) ? get_class($current) : gettype($current);
-                        error_log("Template Debug: Property '{$part}' not found in {$type} for path '{$path}'");
-                    }
                     return null;
                 }
             }
@@ -880,7 +885,7 @@ class Template {
         
         if (!file_exists($includePath)) {
             if ($this->debugMode) {
-                return "<!-- Include file not found: {$includePath} : Process include statements in templates -->";
+                return "<!-- Include file not found: {$includePath} -->";
             }
             return '';
         }
@@ -1153,7 +1158,7 @@ class Template {
         return $arg;
     }
 
-    /**
+        /**
      * Get a nested value from the variables array using bracket notation
      *
      * @param string $path The path to the value (e.g. "user[details][balance]")
