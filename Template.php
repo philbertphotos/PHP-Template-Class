@@ -8,7 +8,9 @@
  * @copyright Copyright (c) 2024-?
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      https://github.com/oxcakmak/PHP-Template-Class
- * @version   1.1.6
+ * @version   1.1.7
+ * @other     special thanks to:
+ *            Berat Kara <@beratkara - https://www.beratkara.com>
  */
 class Template {
     /** @var array Variables available to templates */
@@ -172,24 +174,47 @@ class Template {
      * @return string Processed template content
      */
     private function processForLoops($template) {
-        // Process key-value for loops first
-        $template = preg_replace_callback(
-            '/\{%\s*for\s+([a-zA-Z0-9_]+)\s*,\s*([a-zA-Z0-9_]+)\s+in\s+([a-zA-Z0-9._\[\]\'"]+)\s*%\}([\s\S]*?)\{%\s*endfor\s*%\}/s',
-            array($this, 'processKeyValueForLoop'),
-            $template
-        );
-        
-        // Then process regular for loops
-        $template = preg_replace_callback(
-            '/\{%\s*for\s+([a-zA-Z0-9_]+)\s+in\s+([a-zA-Z0-9._\[\]\'"]+)\s*%\}([\s\S]*?)\{%\s*endfor\s*%\}/s',
-            array($this, 'processForLoop'),
-            $template
-        );
-        
+        $offset = 0;
+
+        while (($start = strpos($template, '{% for', $offset)) !== false) {
+            $stack = [$start];
+            $pos = $start + 1;
+
+            while (!empty($stack)) {
+                $nextFor = strpos($template, '{% for', $pos);
+                $nextEndfor = strpos($template, '{% endfor %}', $pos);
+
+                if ($nextEndfor === false) {
+                    return $template;
+                }
+
+                if ($nextFor !== false && $nextFor < $nextEndfor) {
+                    $stack[] = $nextFor;
+                    $pos = $nextFor + 1;
+                } else {
+                    array_pop($stack);
+                    $pos = $nextEndfor + strlen('{% endfor %}');
+                }
+            }
+
+            $block = substr($template, $start, $pos - $start);
+
+            if (preg_match('/\{%\s*for\s+([a-zA-Z0-9_]+)\s*,\s*([a-zA-Z0-9_]+)\s+in\s+([^\s%]+)\s*%\}([\s\S]*)\{%\s*endfor\s*%\}/', $block, $matches)) {
+                $replacement = $this->processKeyValueForLoop($matches);
+            } elseif (preg_match('/\{%\s*for\s+([a-zA-Z0-9_]+)\s+in\s+([^\s%]+)\s*%\}([\s\S]*)\{%\s*endfor\s*%\}/', $block, $matches)) {
+                $replacement = $this->processForLoop($matches);
+            } else {
+                return $template;
+            }
+
+            $template = substr_replace($template, $replacement, $start, $pos - $start);
+            $offset = $start + strlen($replacement);
+        }
+
         return $template;
     }
     
-        /**
+    /**
      * Process a regular for loop
      *
      * @param array $matches Regex matches from preg_replace_callback
@@ -343,7 +368,7 @@ class Template {
         return $result;
     }
     
-        /**
+    /**
      * Process a loop with an array
      *
      * @param array $array The array to iterate over
@@ -785,7 +810,7 @@ class Template {
         }
     }
     
-        /**
+    /**
      * Get a nested value from the variables array using dot and bracket notation
      *
      * @param string $path The path to the value (e.g. "user.details.balance" or "user[details][balance]")
@@ -1158,7 +1183,7 @@ class Template {
         return $arg;
     }
 
-        /**
+    /**
      * Get a nested value from the variables array using bracket notation
      *
      * @param string $path The path to the value (e.g. "user[details][balance]")
