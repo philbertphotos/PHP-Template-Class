@@ -10,6 +10,10 @@ Everyone's time should be valuable, so please consider donating.
 
 [https://buymeacoffee.com/oxcakmak](https://buymeacoffee.com/oxcakmak)
 
+## Special Thanks
+
+Nested array loop issue solved by [beratkara](https://github.com/beratkara)
+
 ## Features
 
 - **Variable Replacement** - Support for dot notation, bracket notation, and mixed notation
