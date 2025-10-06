@@ -172,6 +172,8 @@ You can call PHP functions directly in your templates:
 
 <!-- Format a number -->
 <p>Balance: {{ number_format(user.details.balance, 2) }}</p>
+Custom fuctions
+<h1>{{ isAllowed(user.name) }}</h1>
 ```
 
 #### Conditions
