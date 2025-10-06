@@ -172,8 +172,11 @@ You can call PHP functions directly in your templates:
 
 <!-- Format a number -->
 <p>Balance: {{ number_format(user.details.balance, 2) }}</p>
-//Custom fuctions
+
+<!-- Custom fuctions -->
 <h1>{%if isAllowed(user.name) === true %} You are allowed to access space {%endif%}</h1>
+
+{%if strtolower(page.name) === 'questioN'%}It matches{%endif%}
 ```
 
 #### Conditions
