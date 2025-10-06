@@ -15,6 +15,16 @@
 class Template {
     /** @var array Variables available to templates */
     private $variables = [];
+
+    /** @var list of allowed functions for security*/
+    private $allowedFunctions = [
+                'htmlspecialchars', 'htmlentities', 'strip_tags',
+                'strtoupper', 'strtolower', 'ucfirst', 'lcfirst', 'ucwords',
+                'number_format', 'round', 'floor', 'ceil', 'abs',
+                'count', 'sizeof', 'implode', 'explode', 'trim', 'ltrim', 'rtrim',
+                'date', 'time', 'strtotime', 'nl2br', 'json_encode', 'md5', 'sha1',
+                'isset', 'empty', 'is_array', 'is_string', 'is_numeric', 'is_object'
+            ];
     
     /** @var string Directory containing template files */
     private $templateDir;
@@ -61,6 +71,9 @@ class Template {
         $this->templateExt = $templateExt;
         
         // Set options if provided
+		if (isset($options['allowedFunctions'])) {
+            $this->allowedFunctions = (array_merge($this->allowedFunctions, $options['allowedFunctions']));
+        }
         if (isset($options['maxMemory'])) {
             $this->maxMemory = (int)$options['maxMemory'];
         }
@@ -1018,18 +1031,8 @@ class Template {
         $functionName = $matches[1];
         $argsString = $matches[2];
         
-        // List of allowed functions for security
-        $allowedFunctions = [
-            'htmlspecialchars', 'htmlentities', 'strip_tags',
-            'strtoupper', 'strtolower', 'ucfirst', 'lcfirst', 'ucwords',
-            'number_format', 'round', 'floor', 'ceil', 'abs',
-            'count', 'sizeof', 'implode', 'explode', 'trim', 'ltrim', 'rtrim',
-            'date', 'time', 'strtotime', 'nl2br', 'json_encode', 'md5', 'sha1',
-            'isset', 'empty', 'is_array', 'is_string', 'is_numeric', 'is_object'
-        ];
-        
         // Check if function is allowed
-        if (!in_array($functionName, $allowedFunctions)) {
+        if (!in_array($functionName, $this->allowedFunctions)) {
             if ($this->debugMode) {
                 return "<!-- Function '{$functionName}' is not allowed -->";
             }
@@ -1151,18 +1154,8 @@ class Template {
             $nestedFunction = $matches[1];
             $nestedArgs = $this->parseFunctionArguments($matches[2]);
             
-            // List of allowed functions for security
-            $allowedFunctions = [
-                'htmlspecialchars', 'htmlentities', 'strip_tags',
-                'strtoupper', 'strtolower', 'ucfirst', 'lcfirst', 'ucwords',
-                'number_format', 'round', 'floor', 'ceil', 'abs',
-                'count', 'sizeof', 'implode', 'explode', 'trim', 'ltrim', 'rtrim',
-                'date', 'time', 'strtotime', 'nl2br', 'json_encode', 'md5', 'sha1',
-                'isset', 'empty', 'is_array', 'is_string', 'is_numeric', 'is_object'
-            ];
-            
             // Check if function is allowed
-            if (in_array($nestedFunction, $allowedFunctions)) {
+            if (in_array($nestedFunction, $this->allowedFunctions)) {
                 try {
                     return call_user_func_array($nestedFunction, $nestedArgs);
                 } catch (Exception $e) {
