@@ -704,7 +704,7 @@ class Template {
         
         // Handle null values
         if ($value === null) {
-            return 'null';
+            return $path;
         }
         
         // Handle boolean values
@@ -1000,6 +1000,17 @@ class Template {
     }
     
     /**
+     * Set allowed Functions
+     *
+     * @param array $allowedFunctions add custom functions
+     * @return Template For method chaining
+     */
+    public function setallowedFunctions($allowedFunctions) {
+		$this->allowedFunctions = (array_merge($this->allowedFunctions, $allowedFunctions));
+        return $this;
+    }
+
+    /**
      * Set maximum memory usage
      *
      * @param int $maxMemory Maximum memory usage in bytes
@@ -1030,7 +1041,7 @@ class Template {
     private function processFunctionCall($matches) {
         $functionName = $matches[1];
         $argsString = $matches[2];
-        
+
         // Check if function is allowed
         if (!in_array($functionName, $this->allowedFunctions)) {
             if ($this->debugMode) {
@@ -1153,7 +1164,7 @@ class Template {
         if (preg_match('/^([a-zA-Z0-9_]+)\s*\(\s*(.*?)\s*\)$/', $arg, $matches)) {
             $nestedFunction = $matches[1];
             $nestedArgs = $this->parseFunctionArguments($matches[2]);
-            
+         
             // Check if function is allowed
             if (in_array($nestedFunction, $this->allowedFunctions)) {
                 try {
